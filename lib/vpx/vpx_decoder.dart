@@ -5,11 +5,28 @@ import 'vpx_image.dart';
 const int VPX_CODEC_ABI_VERSION = 1;
 const int VPX_DECODER_ABI_VERSION = VPX_CODEC_ABI_VERSION + 3;
 
-int vpx_codec_dec_init(vpx_codec_ctx_t ctx, vpx_codec_iface_t iface, vpx_codec_dec_cfg? cfg, int flags) {
-  return vpx_codec_dec_init_ver(ctx, iface, cfg, flags, VPX_DECODER_ABI_VERSION);
+int vpx_codec_dec_init(
+  vpx_codec_ctx_t ctx,
+  vpx_codec_iface_t iface,
+  vpx_codec_dec_cfg? cfg,
+  int flags,
+) {
+  return vpx_codec_dec_init_ver(
+    ctx,
+    iface,
+    cfg,
+    flags,
+    VPX_DECODER_ABI_VERSION,
+  );
 }
 
-int vpx_codec_dec_init_ver(vpx_codec_ctx_t ctx, vpx_codec_iface_t iface, vpx_codec_dec_cfg? cfg, int flags, int ver) {
+int vpx_codec_dec_init_ver(
+  vpx_codec_ctx_t ctx,
+  vpx_codec_iface_t iface,
+  vpx_codec_dec_cfg? cfg,
+  int flags,
+  int ver,
+) {
   ctx.iface = iface;
   ctx.name = iface.name;
   ctx.priv = null;
@@ -22,7 +39,13 @@ int vpx_codec_dec_init_ver(vpx_codec_ctx_t ctx, vpx_codec_iface_t iface, vpx_cod
   return 0;
 }
 
-int vpx_codec_decode(vpx_codec_ctx_t ctx, Uint8List data, int data_sz, dynamic user_priv, int deadline) {
+int vpx_codec_decode(
+  vpx_codec_ctx_t ctx,
+  Uint8List data,
+  int data_sz,
+  VpxUserPriv? user_priv,
+  int deadline,
+) {
   if (ctx.iface?.decode != null) {
     return ctx.iface!.decode!(ctx.priv, data, data_sz, user_priv, deadline);
   }

@@ -5,6 +5,7 @@ import 'detokenize.dart';
 import '../../vpx_dsp/bitreader.dart';
 import '../common/entropymv.dart';
 import '../common/entropy.dart';
+import '../common/onyxc_int.dart';
 import '../common/quant_common.dart';
 import '../common/reconinter.dart';
 import '../common/reconintra.dart';
@@ -14,7 +15,7 @@ import '../common/entropymode.dart';
 // import '../vpx/vpx_image.dart';
 import '../common/filter.dart';
 import 'onyxd_int.dart';
-import '../common/blockd.dart' hide FRAGMENT_DATA;
+import '../common/blockd.dart';
 import '../common/mv.dart';
 
 const int FRAME_HEADER_SZ = 3;
@@ -87,10 +88,23 @@ void decode_mb_rows(VP8D_COMP pbi) {
         fixup_above(img, col, pbi.mb_info_rows[mbi_off].mbmi.uv_mode, PLANE_V);
       }
 
-      decode_macroblock(pbi, partition, row, col, img, pbi.mb_info_rows[mbi_off], coeffs, coeffs_off);
+      decode_macroblock(
+        pbi,
+        partition,
+        row,
+        col,
+        img,
+        pbi.mb_info_rows[mbi_off],
+        coeffs,
+        coeffs_off,
+      );
 
       mbi_off++;
-      coeffs_off += 400;
+      // libvpx reuses the same 400-entry coefficient scratch for every MB
+      // (vp8/decoder/threading.c `decode_mb_row` uses `mb->qcoeff` directly).
+      // The previous `coeffs_off += 400` was a JS-port artifact that treated
+      // the buffer as if it concatenated all MBs in a row, blowing past the
+      // 400-element bound at column 1.
     }
 
     if (pbi.common.level != 0 && row > 0) {
@@ -109,7 +123,12 @@ void decode_mb_rows(VP8D_COMP pbi) {
     if (pbi.common.filter_type != 0) {
       vp8_loop_filter_row_simple(pbi, pbi.common.mb_rows - 1);
     } else {
-      vp8_loop_filter_row_normal(pbi, pbi.common.mb_rows - 1, 0, pbi.common.mb_cols);
+      vp8_loop_filter_row_normal(
+        pbi,
+        pbi.common.mb_rows - 1,
+        0,
+        pbi.common.mb_cols,
+      );
     }
   }
 }
@@ -154,10 +173,17 @@ void fixup_above(vpx_image_t img, int col, int mode, int plane) {
   img.img_data!.fillRange(above_off + width, above_off + width + 4, 127);
 }
 
-void decode_macroblock(VP8D_COMP pbi, int partition, int row, int col, vpx_image_t img, MODE_INFO mbi_cache, Int32List coeffs, int coeffs_off) {
+void decode_macroblock(
+  VP8D_COMP pbi,
+  int partition,
+  int row,
+  int col,
+  vpx_image_t img,
+  MODE_INFO mbi_cache,
+  Int32List coeffs,
+  int coeffs_off,
+) {
   final tokens = pbi.tokens[partition];
-  // above_token_entropy_ctx is a flat Uint8List; wrap a view per-column as Uint32List
-  int above_off = col;
   final left = tokens.left_token_entropy_ctx;
 
   if (col == 0) left.fillRange(0, left.length, 0);
@@ -165,25 +191,70 @@ void decode_macroblock(VP8D_COMP pbi, int partition, int row, int col, vpx_image
   final mbmi = mbi_cache.mbmi;
   coeffs.fillRange(coeffs_off, coeffs_off + 400, 0);
 
-  // Use a per-column above context stored in a small Uint32List (9 words)
-  final aboveCtx = Uint32List(9);
+  // libvpx layout: the above-token entropy context is row-persistent and
+  // indexed by MB column, with 9 entries per column (4 Y top, 2 U top,
+  // 2 V top, 1 Y2). Decoders read context for the first coefficient of
+  // each block and write back the post-decode PT, so subsequent MB rows
+  // see the bottom-row context produced here.
+  final aboveCtxStart = col * 9;
+  final aboveCtx = Uint8List.sublistView(
+    pbi.above_token_entropy_ctx,
+    aboveCtxStart,
+    aboveCtxStart + 9,
+  );
 
   if (mbmi.mb_skip_coeff == 1) {
     vp8_reset_mb_tokens_context(left, aboveCtx, mbmi.y_mode);
     mbmi.eob_mask = 0;
   } else {
     final dqf = pbi.dequantFactors[mbmi.segment_id];
-    mbmi.eob_mask = decode_mb_tokens(tokens.bool, left, aboveCtx, coeffs, coeffs_off, mbmi.y_mode, pbi.common.entropy_hdr.coeff_probs, dqf.factor);
+    mbmi.eob_mask = decode_mb_tokens(
+      tokens.bool,
+      left,
+      aboveCtx,
+      coeffs,
+      coeffs_off,
+      mbmi.y_mode,
+      pbi.common.entropy_hdr.coeff_probs,
+      dqf.factor,
+    );
   }
 
   if (mbmi.y_mode <= B_PRED) {
-    int y_off = img.planes_off[PLANE_Y] + (img.stride[PLANE_Y] * row * 16) + (col * 16);
-    int u_off = img.planes_off[PLANE_U] + (img.stride[PLANE_U] * row * 8) + (col * 8);
-    int v_off = img.planes_off[PLANE_V] + (img.stride[PLANE_V] * row * 8) + (col * 8);
-    predict_intra_chroma(img.img_data!, u_off, img.img_data!, v_off, img.stride[PLANE_U], mbi_cache, coeffs, coeffs_off);
-    predict_intra_luma(img.img_data!, y_off, img.stride[PLANE_Y], mbi_cache, coeffs, coeffs_off);
+    int y_off =
+        img.planes_off[PLANE_Y] + (img.stride[PLANE_Y] * row * 16) + (col * 16);
+    int u_off =
+        img.planes_off[PLANE_U] + (img.stride[PLANE_U] * row * 8) + (col * 8);
+    int v_off =
+        img.planes_off[PLANE_V] + (img.stride[PLANE_V] * row * 8) + (col * 8);
+    predict_intra_chroma(
+      img.img_data!,
+      u_off,
+      img.img_data!,
+      v_off,
+      img.stride[PLANE_U],
+      mbi_cache,
+      coeffs,
+      coeffs_off,
+    );
+    predict_intra_luma(
+      img.img_data!,
+      y_off,
+      img.stride[PLANE_Y],
+      mbi_cache,
+      coeffs,
+      coeffs_off,
+    );
   } else {
-    vp8_build_inter_predictors_mb(pbi, img, coeffs, coeffs_off, mbi_cache, col, row);
+    vp8_build_inter_predictors_mb(
+      pbi,
+      img,
+      coeffs,
+      coeffs_off,
+      mbi_cache,
+      col,
+      row,
+    );
   }
 }
 
@@ -192,13 +263,18 @@ int setup_token_decoder(FRAGMENT_DATA hdr, Uint8List data, int ptr, int sz) {
   int partition_change = (hdr.partitions != partitions) ? 1 : 0;
   hdr.partitions = partitions;
 
-  if (sz < 3 * (partitions - 1)) throw "Truncated packet found parsing partition lengths";
+  if (sz < 3 * (partitions - 1))
+    throw "Truncated packet found parsing partition lengths";
   int local_sz = sz - 3 * (partitions - 1);
   int local_ptr = ptr;
 
   for (int i = 0; i < partitions; i++) {
     if (i < partitions - 1) {
-      hdr.partition_sz[i] = (data[local_ptr] | (data[local_ptr + 1] << 8) | (data[local_ptr + 2] << 16)).toInt();
+      hdr.partition_sz[i] =
+          (data[local_ptr] |
+                  (data[local_ptr + 1] << 8) |
+                  (data[local_ptr + 2] << 16))
+              .toInt();
       local_ptr += 3;
     } else {
       hdr.partition_sz[i] = local_sz;
@@ -209,7 +285,12 @@ int setup_token_decoder(FRAGMENT_DATA hdr, Uint8List data, int ptr, int sz) {
 
   int tokens_ptr = local_ptr;
   for (int i = 0; i < partitions; i++) {
-    vp8dx_start_decode(hdr.tokens[i].bool, data, tokens_ptr, hdr.partition_sz[i]);
+    vp8dx_start_decode(
+      hdr.tokens[i].bool,
+      data,
+      tokens_ptr,
+      hdr.partition_sz[i],
+    );
     tokens_ptr += hdr.partition_sz[i];
   }
   return partition_change;
@@ -218,10 +299,91 @@ int setup_token_decoder(FRAGMENT_DATA hdr, Uint8List data, int ptr, int sz) {
 void init_frame(VP8D_COMP pbi) {
   final pc = pbi.common;
   if (pc.is_key_frame) {
-    pc.entropy_hdr.mv_probs[0].setRange(0, MV_PROB_CNT, vp8_default_mv_context[0]);
-    pc.entropy_hdr.mv_probs[1].setRange(0, MV_PROB_CNT, vp8_default_mv_context[1]);
+    pc.entropy_hdr.mv_probs[0].setRange(
+      0,
+      MV_PROB_CNT,
+      vp8_default_mv_context[0],
+    );
+    pc.entropy_hdr.mv_probs[1].setRange(
+      0,
+      MV_PROB_CNT,
+      vp8_default_mv_context[1],
+    );
     vp8_init_mbmode_probs(pc);
     vp8_default_coef_probs(pc);
+  }
+  // libvpx (vp8/decoder/onyxd_if.c `vp8_create_decoder_instances`):
+  // mode-info storage must be (re)allocated whenever the frame dimensions
+  // change. Without this, `vp8_decode_mode_mvs` indexes into an empty
+  // `mb_info_rows_off` and throws RangeError on the first macroblock row.
+  if (pc.is_key_frame ||
+      pc.frame_size_updated == 1 ||
+      pbi.mb_info_rows.isEmpty) {
+    pbi.modemv_init();
+    _allocFrameBuffers(pbi);
+    pc.frame_size_updated = 0;
+  }
+}
+
+/// libvpx `vp8_alloc_frame_buffers` (vp8/common/alloccommon.c).
+///
+/// VP8 needs a border of `VP8BORDERINPIXELS = 32` pixels around every plane
+/// so that the intra-prediction `[-1]` accesses and inter-prediction MV
+/// reaches outside the visible frame are valid. Without this, `fixup_left`
+/// dereferences `img_data[-1]` on the first macroblock column.
+///
+/// We allocate four I420 buffers (CURRENT/LAST/GOLDEN/ALTREF) sized to the
+/// 16-byte aligned macroblock grid plus a 32-pixel border on each side.
+/// `planes_off[*]` points to the first *visible* pixel; the prediction code
+/// can therefore safely read/write at `planes_off + (-1)`.
+void _allocFrameBuffers(VP8D_COMP pbi) {
+  const border = 32;
+  final pc = pbi.common;
+  // Use the MB-aligned dims (already computed in vp8_decode_frame):
+  final yWidth = pc.mb_cols * 16;
+  final yHeight = pc.mb_rows * 16;
+  final uvWidth = yWidth >> 1;
+  final uvHeight = yHeight >> 1;
+
+  final yStride = yWidth + 2 * border;
+  final uvStride = uvWidth + 2 * border;
+  final ySize = yStride * (yHeight + 2 * border);
+  final uvSize = uvStride * (uvHeight + 2 * border);
+  final total = ySize + 2 * uvSize;
+
+  for (var i = 0; i < pbi.frame_buffers.length; i++) {
+    final img = pbi.frame_buffers[i].img;
+    if (img.img_data != null && img.img_data!.length == total) {
+      // Already sized correctly — keep contents (refs / loop filter state).
+      continue;
+    }
+    img.fmt = VPX_IMG_FMT_I420;
+    img.bps = 12;
+    img.x_chroma_shift = 1;
+    img.y_chroma_shift = 1;
+    img.w = yWidth;
+    img.h = yHeight;
+    img.d_w = pc.Width;
+    img.d_h = pc.Height;
+    img.stride[VPX_PLANE_Y] = yStride;
+    img.stride[VPX_PLANE_U] = uvStride;
+    img.stride[VPX_PLANE_V] = uvStride;
+    img.img_data = Uint8List(total);
+    img.img_data_off = 0;
+    img.img_data_owner = 1;
+    // Plane offsets point at the FIRST VISIBLE PIXEL, leaving the
+    // `border` rows above and `border` columns to the left available for
+    // out-of-frame prediction reads/writes.
+    img.planes_off[VPX_PLANE_Y] = border * yStride + border;
+    img.planes_off[VPX_PLANE_U] = ySize + border * uvStride + border;
+    img.planes_off[VPX_PLANE_V] = ySize + uvSize + border * uvStride + border;
+    // Initialise borders to neutral grey so out-of-frame reads return
+    // sensible values even if the border-extension pass is not yet ported.
+    img.img_data!.fillRange(0, ySize, 128);
+    img.img_data!.fillRange(ySize, ySize + 2 * uvSize, 128);
+    // libvpx initialises every freshly allocated frame buffer with a
+    // refcount of 1 so the first `swap_frame_buffers` release succeeds.
+    pbi.frame_buffers[i].ref_cnt = 1;
   }
 }
 
@@ -242,9 +404,13 @@ int vp8_decode_frame(Uint8List data, VP8D_COMP pbi) {
 
   int ptr = FRAME_HEADER_SZ;
   if (pc.is_key_frame) {
-    if (data[ptr] != 0x9d || data[ptr + 1] != 0x01 || data[ptr + 2] != 0x2a) return -1;
+    if (data[ptr] != 0x9d || data[ptr + 1] != 0x01 || data[ptr + 2] != 0x2a)
+      return -1;
     int w = (data[ptr + 3] | (data[ptr + 4] << 8)) & 0x3fff;
     int h = (data[ptr + 5] | (data[ptr + 6] << 8)) & 0x3fff;
+    // RFC 6386 §9.1: width and height are 14-bit unsigned values; reject zero
+    // dimensions so downstream allocations / strides cannot divide by zero.
+    if (w == 0 || h == 0) return -1;
     pc.horiz_scale = data[ptr + 4] >> 6;
     pc.vert_scale = data[ptr + 6] >> 6;
     if (pc.Width != w || pc.Height != h) {
@@ -258,7 +424,13 @@ int vp8_decode_frame(Uint8List data, VP8D_COMP pbi) {
   }
 
   vp8dx_start_decode(bc, data, ptr, first_partition_sz);
-  if (pc.is_key_frame) bc.get_uint(2);
+  if (pc.is_key_frame) {
+    // RFC 6386 §9.2: 1 bit color_space, 1 bit clamping_type. These follow the
+    // start code on key frames and live in the compressed (boolean-coded)
+    // partition, not the uncompressed header.
+    pc.color_space = bc.read_bit();
+    pc.clamping_type = bc.read_bit();
+  }
 
   init_frame(pbi);
 
@@ -268,8 +440,10 @@ int vp8_decode_frame(Uint8List data, VP8D_COMP pbi) {
     xd.update_data = bc.read_bit();
     if (xd.update_data == 1) {
       xd.abs = bc.read_bit();
-      for (int i = 0; i < MAX_MB_SEGMENTS; i++) xd.quant_idx[i] = bc.maybe_get_int(7);
-      for (int i = 0; i < MAX_MB_SEGMENTS; i++) xd.lf_level[i] = bc.maybe_get_int(6);
+      for (int i = 0; i < MAX_MB_SEGMENTS; i++)
+        xd.quant_idx[i] = bc.maybe_get_int(7);
+      for (int i = 0; i < MAX_MB_SEGMENTS; i++)
+        xd.lf_level[i] = bc.maybe_get_int(6);
     }
     if (xd.update_map == 1) {
       for (int i = 0; i < MB_FEATURE_TREE_PROBS; i++) {
@@ -296,7 +470,12 @@ int vp8_decode_frame(Uint8List data, VP8D_COMP pbi) {
     for (int i = 0; i < 4; i++) pc.mode_delta[i] = bc.maybe_get_int(6);
   }
 
-  setup_token_decoder(pbi.token_hdr, data, ptr + first_partition_sz, sz - ptr - first_partition_sz);
+  setup_token_decoder(
+    pbi.token_hdr,
+    data,
+    ptr + first_partition_sz,
+    sz - ptr - first_partition_sz,
+  );
 
   pc.mbmi_qindex = bc.get_uint(7);
   pc.delta_update = (pc.mbmi_qindex != 0) ? 1 : 0; // Simple update flag
@@ -326,9 +505,22 @@ int vp8_decode_frame(Uint8List data, VP8D_COMP pbi) {
   pc.refresh_last_frame = pc.is_key_frame ? 1 : bc.read_bit();
 
   vp8cx_init_de_quantizer(pbi);
+
+  // RFC 6386 §9.10 / §15: any probability updates this frame applies via
+  // mb_mode_mv_init / read_mvcontexts must be discarded if
+  // refresh_entropy_probs == 0. Snapshot the live FRAME_CONTEXT here and
+  // restore it after the frame is fully decoded.
+  final FRAME_CONTEXT? _saved_fc = pc.refresh_entropy_probs == 0
+      ? (FRAME_CONTEXT()..copyFrom(pc.entropy_hdr))
+      : null;
+
   vp8_decode_mode_mvs(pbi, pbi.bool_decoder);
 
   decode_mb_rows(pbi);
+
+  if (_saved_fc != null) {
+    pc.entropy_hdr.copyFrom(_saved_fc);
+  }
 
   return 0;
 }

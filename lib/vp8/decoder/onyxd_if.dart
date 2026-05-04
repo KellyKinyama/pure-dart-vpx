@@ -19,42 +19,63 @@ RefCntImg vp8_dixie_ref_frame(RefCntImg rcimg) {
   return rcimg;
 }
 
-void vp8dx_receive_compressed_data(VP8D_COMP pbi, int size, Uint8List source, dynamic time_stamp) {
+// libvpx `vp8dx_receive_compressed_data` (vp8/decoder/onyxd_if.c) takes an
+// `int64_t time_stamp` (a.k.a. PTS). The value is currently unused.
+void vp8dx_receive_compressed_data(
+  VP8D_COMP pbi,
+  int size,
+  Uint8List source,
+  int? time_stamp,
+) {
   vp8_decode_frame(source, pbi);
   swap_frame_buffers(pbi);
 }
 
 void swap_frame_buffers(VP8D_COMP cm) {
   final common = cm.common;
-  
+
   if (common.copy_arf == 1) {
     vp8_dixie_release_ref_frame(cm.frame_buffers[ALTREF_FRAME]);
-    cm.frame_buffers[ALTREF_FRAME] = vp8_dixie_ref_frame(cm.frame_buffers[LAST_FRAME]);
+    cm.frame_buffers[ALTREF_FRAME] = vp8_dixie_ref_frame(
+      cm.frame_buffers[LAST_FRAME],
+    );
   } else if (common.copy_arf == 2) {
     vp8_dixie_release_ref_frame(cm.frame_buffers[ALTREF_FRAME]);
-    cm.frame_buffers[ALTREF_FRAME] = vp8_dixie_ref_frame(cm.frame_buffers[GOLDEN_FRAME]);
+    cm.frame_buffers[ALTREF_FRAME] = vp8_dixie_ref_frame(
+      cm.frame_buffers[GOLDEN_FRAME],
+    );
   }
 
   if (common.copy_gf == 1) {
     vp8_dixie_release_ref_frame(cm.frame_buffers[GOLDEN_FRAME]);
-    cm.frame_buffers[GOLDEN_FRAME] = vp8_dixie_ref_frame(cm.frame_buffers[LAST_FRAME]);
+    cm.frame_buffers[GOLDEN_FRAME] = vp8_dixie_ref_frame(
+      cm.frame_buffers[LAST_FRAME],
+    );
   } else if (common.copy_gf == 2) {
     vp8_dixie_release_ref_frame(cm.frame_buffers[GOLDEN_FRAME]);
-    cm.frame_buffers[GOLDEN_FRAME] = vp8_dixie_ref_frame(cm.frame_buffers[ALTREF_FRAME]);
+    cm.frame_buffers[GOLDEN_FRAME] = vp8_dixie_ref_frame(
+      cm.frame_buffers[ALTREF_FRAME],
+    );
   }
 
   if (common.refresh_gf) {
     vp8_dixie_release_ref_frame(cm.frame_buffers[GOLDEN_FRAME]);
-    cm.frame_buffers[GOLDEN_FRAME] = vp8_dixie_ref_frame(cm.frame_buffers[CURRENT_FRAME]);
+    cm.frame_buffers[GOLDEN_FRAME] = vp8_dixie_ref_frame(
+      cm.frame_buffers[CURRENT_FRAME],
+    );
   }
 
   if (common.refresh_arf) {
     vp8_dixie_release_ref_frame(cm.frame_buffers[ALTREF_FRAME]);
-    cm.frame_buffers[ALTREF_FRAME] = vp8_dixie_ref_frame(cm.frame_buffers[CURRENT_FRAME]);
+    cm.frame_buffers[ALTREF_FRAME] = vp8_dixie_ref_frame(
+      cm.frame_buffers[CURRENT_FRAME],
+    );
   }
 
   if (common.refresh_last_frame != 0) {
     vp8_dixie_release_ref_frame(cm.frame_buffers[LAST_FRAME]);
-    cm.frame_buffers[LAST_FRAME] = vp8_dixie_ref_frame(cm.frame_buffers[CURRENT_FRAME]);
+    cm.frame_buffers[LAST_FRAME] = vp8_dixie_ref_frame(
+      cm.frame_buffers[CURRENT_FRAME],
+    );
   }
 }

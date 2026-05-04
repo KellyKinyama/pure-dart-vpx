@@ -64,14 +64,19 @@ int read_uv_mode(VpxReader bc, Uint8List p) {
  * @param {type} bool
  * @returns {undefined}
  */
-void read_kf_modes(VP8D_COMP pbi, List<MODE_INFO> mi, int this_off, VpxReader bool) {
+void read_kf_modes(
+  VP8D_COMP pbi,
+  List<MODE_INFO> mi,
+  int this_off,
+  VpxReader bool,
+) {
   // var uv_mode = 0;
   var mis = pbi.common.mode_info_stride;
   var mi_cache = mi[this_off];
-  
+
   // Add split mode dynamically to block info
   mi_cache.init_split_mode();
-  
+
   var modes_cache = mi_cache.bmi!.modes;
   mi_cache.mbmi.ref_frame = INTRA_FRAME;
   mi_cache.mbmi.y_mode = read_kf_ymode(bool, vp8_kf_ymode_prob);
@@ -89,7 +94,9 @@ void read_kf_modes(VP8D_COMP pbi, List<MODE_INFO> mi, int this_off, VpxReader bo
   mi_cache.mbmi.uv_mode = read_uv_mode(bool, vp8_kf_uv_mode_prob);
 }
 
-void vp8_clamp_mv2(MotionVector mv, dynamic bounds) {
+// RFC 6386 §17.1: motion-vector clamping. Bounds are eighth-pel and derived
+// from `mb_to_{left,right,top,bottom}_edge` on the enclosing macroblock.
+void vp8_clamp_mv2(MotionVector mv, MVBounds bounds) {
   if (mv.col < bounds.mb_to_left_edge) {
     mv.col = bounds.mb_to_left_edge;
   } else if (mv.col > bounds.mb_to_right_edge) {
@@ -108,7 +115,14 @@ void read_mv(VpxReader bool, MotionVector mv, List<Uint8List> mvc) {
   mv.row = read_mv_component(bool, mvc[1]);
 }
 
-void decode_split_mv(MODE_INFO mi, MODE_INFO left_mb, MODE_INFO above_mb, FRAME_CONTEXT hdr, MotionVector best_mv, VpxReader bool) {
+void decode_split_mv(
+  MODE_INFO mi,
+  MODE_INFO left_mb,
+  MODE_INFO above_mb,
+  FRAME_CONTEXT hdr,
+  MotionVector best_mv,
+  VpxReader bool,
+) {
   int j = 0;
   int k = 0;
   int s = 3;
@@ -201,25 +215,32 @@ Uint8List get_sub_mv_ref_prob(MotionVector left, MotionVector above) {
 }
 
 final List<Uint8List> vp8_sub_mv_ref_prob3 = [
-  Uint8List.fromList([147, 136, 18]), /* SUBMVREF_NORMAL          */
-  Uint8List.fromList([223, 1, 34]),   /* SUBMVREF_LEFT_ABOVE_SAME */
-  Uint8List.fromList([106, 145, 1]),  /* SUBMVREF_LEFT_ZED        */
-  Uint8List.fromList([208, 1, 1]),    /* SUBMVREF_LEFT_ABOVE_ZED  */
-  Uint8List.fromList([179, 121, 1]),  /* SUBMVREF_ABOVE_ZED       */
-  Uint8List.fromList([223, 1, 34]),   /* SUBMVREF_LEFT_ABOVE_SAME */
-  Uint8List.fromList([179, 121, 1]),  /* SUBMVREF_ABOVE_ZED       */
-  Uint8List.fromList([208, 1, 1])     /* SUBMVREF_LEFT_ABOVE_ZED  */
+  Uint8List.fromList([147, 136, 18]),
+  /* SUBMVREF_NORMAL          */
+  Uint8List.fromList([223, 1, 34]),
+  /* SUBMVREF_LEFT_ABOVE_SAME */
+  Uint8List.fromList([106, 145, 1]),
+  /* SUBMVREF_LEFT_ZED        */
+  Uint8List.fromList([208, 1, 1]),
+  /* SUBMVREF_LEFT_ABOVE_ZED  */
+  Uint8List.fromList([179, 121, 1]),
+  /* SUBMVREF_ABOVE_ZED       */
+  Uint8List.fromList([223, 1, 34]),
+  /* SUBMVREF_LEFT_ABOVE_SAME */
+  Uint8List.fromList([179, 121, 1]),
+  /* SUBMVREF_ABOVE_ZED       */
+  Uint8List.fromList([208, 1, 1]) /* SUBMVREF_LEFT_ABOVE_ZED  */,
 ];
 
 bool need_mc_border(MotionVector mv, int l, int t, int b_w, int w, int h) {
   int rb = 0;
   int bb = 0;
 
-  // Get distance to edge for top-left pixel 
+  // Get distance to edge for top-left pixel
   l += (mv.col >> 3);
   t += (mv.row >> 3);
 
-  // Get distance to edge for bottom-right pixel 
+  // Get distance to edge for bottom-right pixel
   rb = w - (l + b_w);
   bb = h - (t + b_w);
 
@@ -227,24 +248,29 @@ bool need_mc_border(MotionVector mv, int l, int t, int b_w, int w, int h) {
 }
 
 int read_mv_component(VpxReader bool, Uint8List mvc) {
-  const int IS_SHORT = 0, SIGN = 1, SHORT = 2, BITS = SHORT + 7, LONG_WIDTH = 10;
+  const int IS_SHORT = 0,
+      SIGN = 1,
+      SHORT = 2,
+      BITS = SHORT + 7,
+      LONG_WIDTH = 10;
   int x = 0;
 
-  if (vpx_read(bool, mvc[IS_SHORT]) == 1) // Large 
+  if (vpx_read(bool, mvc[IS_SHORT]) == 1) // Large
   {
     for (int i = 0; i < 3; i++) {
-        x += vpx_read(bool, mvc[BITS + i]) << i;
+      x += vpx_read(bool, mvc[BITS + i]) << i;
     }
 
     /* Skip bit 3, which is sometimes implicit */
     for (int i = LONG_WIDTH - 1; i > 3; i--) {
-        x += vpx_read(bool, mvc[BITS + i]) << i;
+      x += vpx_read(bool, mvc[BITS + i]) << i;
     }
 
     if ((x & 0xFFF0) == 0 || vpx_read(bool, mvc[BITS + 3]) == 1) {
-        x += 8;
+      x += 8;
     }
-  } else { /* small */
+  } else {
+    /* small */
     x = vp8_treed_read(bool, vp8_small_mvtree, mvc, SHORT);
   }
 
@@ -261,7 +287,13 @@ final List<MotionVector> chroma_mv = List.generate(4, (_) => MotionVector());
 final Int32List cnt = Int32List(4);
 final MotionVector this_mv_tmp = MotionVector();
 
-void read_mb_modes_mv(VP8D_COMP pbi, List<MODE_INFO> mi, int this_off, VpxReader bool, dynamic bounds) {
+void read_mb_modes_mv(
+  VP8D_COMP pbi,
+  List<MODE_INFO> mi,
+  int this_off,
+  VpxReader bool,
+  MVBounds bounds,
+) {
   var mbmi = mi[this_off].mbmi;
   var hdr = pbi.common.entropy_hdr;
   var this_ = mi[this_off];
@@ -306,7 +338,8 @@ void read_mb_modes_mv(VP8D_COMP pbi, List<MODE_INFO> mi, int this_off, VpxReader
         this_mv_tmp.col = left_.mbmi.mv.col;
         mv_bias(left_, sign_bias, mbmi.ref_frame, this_mv_tmp);
 
-        if (this_mv_tmp.row != near_mvs[mv_off].row || this_mv_tmp.col != near_mvs[mv_off].col) {
+        if (this_mv_tmp.row != near_mvs[mv_off].row ||
+            this_mv_tmp.col != near_mvs[mv_off].col) {
           mv_off++;
           near_mvs[mv_off].row = this_mv_tmp.row;
           near_mvs[mv_off].col = this_mv_tmp.col;
@@ -325,7 +358,8 @@ void read_mb_modes_mv(VP8D_COMP pbi, List<MODE_INFO> mi, int this_off, VpxReader
         this_mv_tmp.col = aboveleft.mbmi.mv.col;
         mv_bias(aboveleft, sign_bias, mbmi.ref_frame, this_mv_tmp);
 
-        if (this_mv_tmp.row != near_mvs[mv_off].row || this_mv_tmp.col != near_mvs[mv_off].col) {
+        if (this_mv_tmp.row != near_mvs[mv_off].row ||
+            this_mv_tmp.col != near_mvs[mv_off].col) {
           mv_off++;
           near_mvs[mv_off].row = this_mv_tmp.row;
           near_mvs[mv_off].col = this_mv_tmp.col;
@@ -346,14 +380,18 @@ void read_mb_modes_mv(VP8D_COMP pbi, List<MODE_INFO> mi, int this_off, VpxReader
       }
     }
 
-    cnt[CNT_SPLITMV] = ((above.mbmi.y_mode == SPLITMV ? 1 : 0) + (left_.mbmi.y_mode == SPLITMV ? 1 : 0)) * 2 + (aboveleft.mbmi.y_mode == SPLITMV ? 1 : 0);
+    cnt[CNT_SPLITMV] =
+        ((above.mbmi.y_mode == SPLITMV ? 1 : 0) +
+                (left_.mbmi.y_mode == SPLITMV ? 1 : 0)) *
+            2 +
+        (aboveleft.mbmi.y_mode == SPLITMV ? 1 : 0);
 
     /* Swap near and nearest if necessary */
     if (cnt[CNT_NEAR] > cnt[CNT_NEAREST]) {
       int tmp_cnt = cnt[CNT_NEAREST];
       cnt[CNT_NEAREST] = cnt[CNT_NEAR];
       cnt[CNT_NEAR] = tmp_cnt;
-      
+
       int tmp_row = near_mvs[CNT_NEAREST].row;
       int tmp_col = near_mvs[CNT_NEAREST].col;
       near_mvs[CNT_NEAREST].row = near_mvs[CNT_NEAR].row;
@@ -361,7 +399,7 @@ void read_mb_modes_mv(VP8D_COMP pbi, List<MODE_INFO> mi, int this_off, VpxReader
       near_mvs[CNT_NEAR].row = tmp_row;
       near_mvs[CNT_NEAR].col = tmp_col;
     }
-    
+
     if (cnt[CNT_NEAREST] >= cnt[CNT_BEST]) {
       near_mvs[CNT_BEST].row = near_mvs[CNT_NEAREST].row;
       near_mvs[CNT_BEST].col = near_mvs[CNT_NEAREST].col;
@@ -376,7 +414,8 @@ void read_mb_modes_mv(VP8D_COMP pbi, List<MODE_INFO> mi, int this_off, VpxReader
     if (vpx_read(bool, vp8_mode_contexts[cnt[CNT_INTRA] * 4]) == 1) {
       if (vpx_read(bool, vp8_mode_contexts[cnt[CNT_NEAREST] * 4 + 1]) == 1) {
         if (vpx_read(bool, vp8_mode_contexts[cnt[CNT_NEAR] * 4 + 2]) == 1) {
-          if (vpx_read(bool, vp8_mode_contexts[cnt[CNT_SPLITMV] * 4 + 3]) == 1) {
+          if (vpx_read(bool, vp8_mode_contexts[cnt[CNT_SPLITMV] * 4 + 3]) ==
+              1) {
             // splitmv
             this_.mbmi.y_mode = SPLITMV;
             chroma_mv[0].row = chroma_mv[0].col = 0;
@@ -399,7 +438,14 @@ void read_mb_modes_mv(VP8D_COMP pbi, List<MODE_INFO> mi, int this_off, VpxReader
               chroma_mv[chroma_idx].col += this_mvs[b].col;
               chroma_mv[chroma_idx].row += this_mvs[b].row;
 
-              if (need_mc_border(this_mvs[b], x + (b & 3) * 4, y + (b & ~3), 4, w, h)) {
+              if (need_mc_border(
+                this_mvs[b],
+                x + (b & 3) * 4,
+                y + (b & ~3),
+                4,
+                w,
+                h,
+              )) {
                 this_.mbmi.need_mc_border = 1;
               }
             }
@@ -410,7 +456,14 @@ void read_mb_modes_mv(VP8D_COMP pbi, List<MODE_INFO> mi, int this_off, VpxReader
               chroma_mv[b].col = (chroma_mv[b].col >> 2).toInt();
               chroma_mv[b].row = (chroma_mv[b].row >> 2).toInt();
 
-              if (need_mc_border(chroma_mv[b], x + (b & 1) * 8, y + ((b >> 1) << 3), 16, w, h)) {
+              if (need_mc_border(
+                chroma_mv[b],
+                x + (b & 1) * 8,
+                y + ((b >> 1) << 3),
+                16,
+                w,
+                h,
+              )) {
                 this_.mbmi.need_mc_border = 1;
               }
             }
@@ -454,10 +507,14 @@ void read_mb_modes_mv(VP8D_COMP pbi, List<MODE_INFO> mi, int this_off, VpxReader
     if (y_mode == B_PRED) {
       var modes = this_.bmi!.modes;
       var mvs = this_.bmi!.mvs;
+      // RFC 6386 §11.1 / §16: B_PRED stores per-block intra modes only; the
+      // sub-block motion vectors stay zeroed (intra blocks have no MV).
+      // libvpx (vp8/decoder/decodemv.c): `mi->bmi[i].as_mode = ...;` only.
       for (int i = 0; i < 16; i++) {
         int b = vp8_treed_read(bool, vp8_bmode_tree, vp8_bmode_prob, 0);
         modes[i] = b;
-        mvs[i].row = b; // JS was doing modes[i] = mvs[i].as_row_col[0] = b
+        mvs[i].row = 0;
+        mvs[i].col = 0;
       }
     }
     mbmi.y_mode = y_mode;
@@ -467,9 +524,15 @@ void read_mb_modes_mv(VP8D_COMP pbi, List<MODE_INFO> mi, int this_off, VpxReader
   }
 }
 
-void decode_mb_mode_mvs(VP8D_COMP pbi, VpxReader bool, List<MODE_INFO> mi, int this_off, dynamic bounds) {
+void decode_mb_mode_mvs(
+  VP8D_COMP pbi,
+  VpxReader bool,
+  List<MODE_INFO> mi,
+  int this_off,
+  MVBounds bounds,
+) {
   var mi_cache = mi[this_off];
-  
+
   if (pbi.segment_hdr.update_map == 1) {
     read_mb_features(bool, mi_cache, pbi.segment_hdr);
   } else if (pbi.common.is_key_frame && pbi.segment_hdr.update_map == 0) {
@@ -477,7 +540,10 @@ void decode_mb_mode_mvs(VP8D_COMP pbi, VpxReader bool, List<MODE_INFO> mi, int t
   }
 
   if (pbi.common.entropy_hdr.coeff_skip_enabled == 1) {
-    mi_cache.mbmi.mb_skip_coeff = vpx_read(bool, pbi.common.entropy_hdr.coeff_skip_prob);
+    mi_cache.mbmi.mb_skip_coeff = vpx_read(
+      bool,
+      pbi.common.entropy_hdr.coeff_skip_prob,
+    );
   } else {
     mi_cache.mbmi.mb_skip_coeff = 0;
   }

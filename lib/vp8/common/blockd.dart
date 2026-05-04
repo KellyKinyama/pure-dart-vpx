@@ -3,26 +3,68 @@ import 'mv.dart';
 
 // left_context_index
 final Uint8List vp8_block2left = Uint8List.fromList([
-  0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3,
-  4, 4, 5, 5, 6, 6, 7, 7, 8
+  0,
+  0,
+  0,
+  0,
+  1,
+  1,
+  1,
+  1,
+  2,
+  2,
+  2,
+  2,
+  3,
+  3,
+  3,
+  3,
+  4,
+  4,
+  5,
+  5,
+  6,
+  6,
+  7,
+  7,
+  8,
 ]);
 
 // above_context_index
 final Uint8List vp8_block2above = Uint8List.fromList([
-  0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3,
-  4, 5, 4, 5, 6, 7, 6, 7, 8
+  0,
+  1,
+  2,
+  3,
+  0,
+  1,
+  2,
+  3,
+  0,
+  1,
+  2,
+  3,
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  4,
+  5,
+  6,
+  7,
+  6,
+  7,
+  8,
 ]);
 
 const int MAX_PARTITIONS = 8;
 
-// FRAGMENT_DATA
-class FRAGMENT_DATA {
-  final dynamic decoder;
-  int partitions = 0;
-  final Int32List partition_sz = Int32List(MAX_PARTITIONS);
-
-  FRAGMENT_DATA(this.decoder);
-}
+// NOTE: The real `FRAGMENT_DATA` (libvpx `vp8/decoder/onyxd_int.h`) lives in
+// `decoder/onyxd_int.dart` with a typed back-pointer to `VP8D_COMP`. The stub
+// that used to live here held a `dynamic decoder` and was unused (decodeframe
+// imports this file with `hide FRAGMENT_DATA`).
 
 class MB_MODE_INFO {
   int y_mode = 0;
@@ -59,8 +101,11 @@ class MODE_INFO {
   }
 }
 
+/// libvpx `MACROBLOCKD` (vp8/common/blockd.h). The real C struct holds a
+/// pointer to its enclosing `VP8D_COMP`; in this port the field is unused, so
+/// the typed back-pointer is omitted to avoid a `blockd <-> onyxd_int` import
+/// cycle. Reintroduce as `final VP8D_COMP decoder;` if needed.
 class MACROBLOCKD {
-  final dynamic decoder;
   int enabled = 0;
   int update_data = 0;
   int update_map = 0;
@@ -69,7 +114,7 @@ class MACROBLOCKD {
   final Int32List lf_level = Int32List(4);
   final Int32List quant_idx = Int32List(4);
 
-  MACROBLOCKD(this.decoder);
+  MACROBLOCKD();
 
   Float64List get lf_level_64 => lf_level.buffer.asFloat64List();
   Float64List get quant_idx_64 => quant_idx.buffer.asFloat64List();

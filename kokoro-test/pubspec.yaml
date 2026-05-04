@@ -1,0 +1,21 @@
+name: kokoro_test
+description: A sample command-line application.
+version: 1.0.0
+# repository: https://github.com/my_org/my_repo
+
+environment:
+  sdk: ^3.11.5
+
+# Add regular dependencies here.
+dependencies:
+  archive: ^4.0.9
+  ffi: ^2.2.0
+  flutter_kokoro_tts: ^0.0.1
+  flutter_onnxruntime: ^1.7.0
+  http: ^1.6.0
+  onnxruntime: ^1.4.1
+  path: ^1.9.0
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.6

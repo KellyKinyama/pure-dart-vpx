@@ -1,4 +1,6 @@
+import 'dart:typed_data';
 import '../../util/c_utils.dart' as c_utils;
+import '../../vpx/vpx_image.dart';
 
 final memset = c_utils.memset;
 
@@ -19,8 +21,10 @@ final memset = c_utils.memset;
 // function vp8_setup_intra_recon(predict, y_off, u_off, v_off, y_stride, uv_stride) {
 //The left column of out-of-frame pixels is taken to be 129,
 // unless we're doing DC_PRED, in which case we duplicate the
+// libvpx `vp8_setup_intra_recon` (vp8/common/setupintrarecon.c). Currently a
+// no-op port; bodies remain commented out pending RFC 6386 §12 intra-recon.
 void vp8_setup_intra_recon(
-  dynamic predict,
+  Uint8List predict,
   int y_off,
   int u_off,
   int v_off,
@@ -67,16 +71,18 @@ void vp8_setup_intra_recon(
   // }
 }
 
-void vp8_setup_intra_recon_top_line(dynamic ybf) {
-  //console.log(ybf.planes_off[0]);
-  var data = ybf.img_data;
-
-  var uv_ptr = ybf.planes_off[1] - 1 - ybf.uv_stride;
-  var uv_length = (ybf.d_w >> 1) + 5;
-
-  // TODO: This is being doubled somewhere else, find it!
-  //memset(data, ybf.planes_off[0] - 1 - ybf.stride, 127, ybf.d_w + 5);//ybf.y_width + 5
-  //memset(data, uv_ptr, 127, uv_length);
+void vp8_setup_intra_recon_top_line(vpx_image_t ybf) {
+  // libvpx accesses `ybf->u_buffer - 1 - ybf->uv_stride` and `ybf->y_width + 5`.
+  // Translated to the typed `vpx_image_t` (libvpx `YV12_BUFFER_CONFIG`) the
+  // chroma stride lives at `stride[VPX_PLANE_U]`. Body is a no-op for now.
+  // ignore: unused_local_variable
+  final data = ybf.img_data;
+  // ignore: unused_local_variable
+  final uv_ptr = ybf.planes_off[1] - 1 - ybf.stride[VPX_PLANE_U];
+  // ignore: unused_local_variable
+  final uv_length = (ybf.d_w >> 1) + 5;
+  // memset(data!, ybf.planes_off[0] - 1 - ybf.stride[VPX_PLANE_Y], 127, ybf.d_w + 5);
+  // memset(data!, uv_ptr, 127, uv_length);
 }
 // module.exports = {};
 // module.exports.vp8_setup_intra_recon = vp8_setup_intra_recon;

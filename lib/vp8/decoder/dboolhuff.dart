@@ -2,12 +2,15 @@ import 'dart:typed_data';
 import '../../vpx_dsp/bitreader.dart';
 
 class BOOL_DECODER extends VpxReader {
-  // These fields were undefined in the constructor but present in the original JS.
-  // We'll define them as dynamic or specific types if we can infer them later.
-  dynamic decrypt_cb;
-  dynamic decrypt_state;
-  dynamic buffer_end;
-  bool clear_buffer = false;
+  // RFC 6386 §7: Boolean entropy decoder. The libvpx C struct also carries
+  // optional `vpx_decrypt_cb decrypt_cb`, `void *decrypt_state`,
+  // `const unsigned char *buffer_end`, and `int clear_buffer`. They are
+  // unused in this port. Reintroduce them only with concrete types:
+  //   typedef VpxDecryptCb = void Function(
+  //       VpxDecryptState state, Uint8List inBuf, int inOff,
+  //       Uint8List outBuf, int outOff, int n);
+  //   VpxDecryptState? decrypt_state; int buffer_end_off = 0; int clear_buffer = 0;
+  // (where `VpxDecryptState` is an abstract marker class for the void* cookie.)
 
   int get_uint(int bits) {
     return bool_get_uint(this, bits);
@@ -26,7 +29,12 @@ class BOOL_DECODER extends VpxReader {
   }
 }
 
-void vp8dx_start_decode(BOOL_DECODER bool_dec, Uint8List start_partition, int ptr, int sz) {
+void vp8dx_start_decode(
+  BOOL_DECODER bool_dec,
+  Uint8List start_partition,
+  int ptr,
+  int sz,
+) {
   if (sz >= 2) {
     bool_dec.value = (start_partition[ptr] << 8) | start_partition[ptr + 1];
     bool_dec.input = start_partition;
